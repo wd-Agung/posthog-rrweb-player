@@ -468,6 +468,7 @@
           </div>
           <div class="patch-actions">
             <button id="patchAndPlay" class="button" type="button">Patch & play</button>
+            <button id="enableLivePatch" class="secondary-button" type="button">Enable live patch</button>
             <a id="downloadPatched" class="secondary-button" href="#" download="recording.patched.json" aria-disabled="true">Download</a>
           </div>
         </div>
@@ -522,6 +523,7 @@
     const newBucketInput = document.getElementById('newBucketInput')
     const expirationInput = document.getElementById('expirationInput')
     const patchAndPlayEl = document.getElementById('patchAndPlay')
+    const enableLivePatchEl = document.getElementById('enableLivePatch')
     const downloadPatchedEl = document.getElementById('downloadPatched')
 
     let player = null
@@ -586,6 +588,39 @@
         statusEl.textContent = 'Patch failed'
       } finally {
         patchAndPlayEl.disabled = false
+      }
+    })
+
+    enableLivePatchEl.addEventListener('click', async () => {
+      resetError()
+
+      if (!loadedEvents.length) {
+        showPatchError('Open a recording file first.')
+        return
+      }
+
+      try {
+        statusEl.textContent = 'Enabling live patch...'
+        patchStatusEl.textContent = 'Working'
+        enableLivePatchEl.disabled = true
+
+        const serviceAccount = await readServiceAccount()
+        const bucketMap = readBucketMap()
+        const expiresSeconds = readExpiration()
+
+        if (!serviceAccount && !bucketMap.size) {
+          throw new Error('Paste a service account or provide a bucket rewrite.')
+        }
+
+        await configureServiceWorkerPatcher({ serviceAccount, bucketMap, expiresSeconds })
+        renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+        patchStatusEl.textContent = 'Live patch enabled'
+        statusEl.textContent = 'Ready'
+      } catch (error) {
+        showPatchError(error.message || String(error))
+        statusEl.textContent = 'Live patch failed'
+      } finally {
+        enableLivePatchEl.disabled = false
       }
     })
 
@@ -1010,6 +1045,58 @@
       downloadPatchedEl.href = patchedDownloadUrl
       downloadPatchedEl.download = patchedFileName()
       downloadPatchedEl.removeAttribute('aria-disabled')
+    }
+
+    async function configureServiceWorkerPatcher({ serviceAccount, bucketMap, expiresSeconds }) {
+      if (!('serviceWorker' in navigator)) {
+        throw new Error('Service workers are not supported in this browser.')
+      }
+
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost' && location.hostname !== '127.0.0.1') {
+        throw new Error('Live patch requires HTTPS or localhost. Use the published GitHub Pages URL, not file://.')
+      }
+
+      const registration = await navigator.serviceWorker.register('./sw.js')
+      await navigator.serviceWorker.ready
+
+      if (!navigator.serviceWorker.controller) {
+        await new Promise((resolve) => {
+          navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })
+        })
+      }
+
+      const target = navigator.serviceWorker.controller || registration.active || registration.waiting || registration.installing
+      if (!target) {
+        throw new Error('Service worker is not active yet. Try again.')
+      }
+
+      const bucketMapArray = [...bucketMap.entries()]
+      await postServiceWorkerMessage(target, {
+        type: 'configure-gcs-patcher',
+        serviceAccount,
+        bucketMap: bucketMapArray,
+        expiresSeconds,
+      })
+    }
+
+    function postServiceWorkerMessage(target, message) {
+      return new Promise((resolve, reject) => {
+        const channel = new MessageChannel()
+        const timeout = window.setTimeout(() => {
+          reject(new Error('Timed out configuring service worker.'))
+        }, 8000)
+
+        channel.port1.onmessage = (event) => {
+          window.clearTimeout(timeout)
+          if (event.data && event.data.ok) {
+            resolve(event.data)
+          } else {
+            reject(new Error(event.data?.error || 'Service worker configuration failed.'))
+          }
+        }
+
+        target.postMessage(message, [channel.port2])
+      })
     }
 
     function flattenEvents(values) {
