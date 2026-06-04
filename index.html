@@ -1,0 +1,1274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Posthog rrweb player</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@posthog/rrweb-player@latest/dist/style.css" />
+  <style>
+    :root {
+      color-scheme: light;
+      --bg: #f6f7f9;
+      --panel: #ffffff;
+      --border: #d9dee7;
+      --text: #172033;
+      --muted: #667085;
+      --accent: #0f766e;
+      --accent-hover: #115e59;
+      --danger: #b42318;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--text);
+      font: 14px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-rows: auto 1fr;
+      min-height: 100vh;
+    }
+
+    header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 14px 18px;
+      background: var(--panel);
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 {
+      margin: 0;
+      font-size: 17px;
+      font-weight: 650;
+      letter-spacing: 0;
+    }
+
+    .controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      padding: 0 12px;
+      border: 1px solid var(--accent);
+      border-radius: 6px;
+      background: var(--accent);
+      color: #fff;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .button:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+
+    .file-input {
+      position: absolute;
+      inline-size: 1px;
+      block-size: 1px;
+      opacity: 0;
+      overflow: hidden;
+    }
+
+    .meta {
+      color: var(--muted);
+      font-size: 13px;
+      white-space: nowrap;
+    }
+
+    main {
+      display: grid;
+      grid-template-columns: minmax(260px, 340px) 1fr;
+      min-height: 0;
+    }
+
+    aside {
+      padding: 16px;
+      border-right: 1px solid var(--border);
+      background: var(--panel);
+      overflow: auto;
+    }
+
+    .dropzone {
+      display: grid;
+      align-content: center;
+      gap: 10px;
+      min-height: 150px;
+      padding: 18px;
+      border: 1px dashed #98a2b3;
+      border-radius: 8px;
+      background: #fbfcfe;
+      color: var(--muted);
+      text-align: center;
+    }
+
+    .dropzone.dragging {
+      border-color: var(--accent);
+      background: #ecfdf5;
+      color: var(--text);
+    }
+
+    .dropzone strong {
+      display: block;
+      color: var(--text);
+      font-size: 15px;
+    }
+
+    .details {
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+
+    .patcher {
+      display: grid;
+      gap: 10px;
+      margin-top: 16px;
+      border-top: 1px solid var(--border);
+      padding-top: 14px;
+    }
+
+    .patcher-title {
+      margin: 0;
+      color: var(--text);
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0;
+    }
+
+    .field {
+      display: grid;
+      gap: 5px;
+    }
+
+    .field label {
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .field input {
+      width: 100%;
+      min-height: 34px;
+      padding: 6px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+
+    .field textarea {
+      width: 100%;
+      min-height: 116px;
+      resize: vertical;
+      padding: 8px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: 12px/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+
+    .secondary-button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 34px;
+      padding: 0 10px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font-weight: 600;
+      cursor: pointer;
+      text-decoration: none;
+    }
+
+    .secondary-button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .secondary-button[aria-disabled="true"] {
+      pointer-events: none;
+      opacity: 0.5;
+    }
+
+    .patch-actions {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
+    .row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 7px 0;
+      border-bottom: 1px solid #eef1f5;
+    }
+
+    .row span:first-child {
+      color: var(--muted);
+    }
+
+    .row span:last-child {
+      color: var(--text);
+      font-weight: 600;
+      text-align: right;
+      overflow-wrap: anywhere;
+    }
+
+    .error {
+      margin-top: 14px;
+      color: var(--danger);
+      font-weight: 600;
+      overflow-wrap: anywhere;
+    }
+
+    .stage {
+      display: grid;
+      grid-template-rows: 1fr auto;
+      gap: 10px;
+      min-width: 0;
+      min-height: 0;
+      padding: 16px;
+      overflow: auto;
+    }
+
+    #player {
+      min-width: 320px;
+      min-height: 420px;
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+
+    .empty {
+      display: grid;
+      place-items: center;
+      min-height: 420px;
+      color: var(--muted);
+      text-align: center;
+      padding: 24px;
+    }
+
+    .timeline {
+      display: none;
+      gap: 8px;
+      position: sticky;
+      bottom: 0;
+      min-height: 70px;
+      padding: 10px 12px;
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      box-shadow: 0 -2px 10px rgba(16, 24, 40, 0.06);
+    }
+
+    .timeline.ready {
+      display: flex;
+      flex-direction: column;
+    }
+
+    .activity-strip {
+      position: relative;
+      width: 100%;
+      height: 16px;
+      overflow: hidden;
+      border: 1px solid #d0d5dd;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #f8fafc, #eef2f7);
+      cursor: pointer;
+    }
+
+    .activity-marker {
+      position: absolute;
+      bottom: 2px;
+      min-width: 2px;
+      border-radius: 999px 999px 0 0;
+      background: var(--accent);
+    }
+
+    .playhead {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      width: 2px;
+      border-radius: 999px;
+      background: #111827;
+      transform: translateX(-1px);
+      pointer-events: none;
+    }
+
+    .timeline-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      width: 100%;
+    }
+
+    .icon-button {
+      display: inline-grid;
+      place-items: center;
+      width: 34px;
+      height: 34px;
+      flex: 0 0 auto;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 700;
+    }
+
+    .icon-button:hover {
+      border-color: var(--accent);
+      color: var(--accent);
+    }
+
+    .time-label {
+      min-width: 54px;
+      color: var(--muted);
+      font-variant-numeric: tabular-nums;
+      text-align: center;
+    }
+
+    .timeline-controls input[type="range"] {
+      width: 100%;
+      min-width: 120px;
+      accent-color: var(--accent);
+      cursor: pointer;
+    }
+
+    .stage:fullscreen {
+      padding: 12px;
+      background: var(--bg);
+    }
+
+    .stage:fullscreen #player {
+      max-height: calc(100vh - 76px);
+    }
+
+    body.player-expanded {
+      overflow: hidden;
+    }
+
+    .stage.pseudo-fullscreen {
+      position: fixed;
+      inset: 0;
+      z-index: 9999;
+      padding: 12px;
+      background: var(--bg);
+    }
+
+    .stage.pseudo-fullscreen #player {
+      max-height: calc(100vh - 76px);
+    }
+
+    @media (max-width: 840px) {
+      header {
+        align-items: flex-start;
+        flex-direction: column;
+      }
+
+      .controls {
+        justify-content: flex-start;
+      }
+
+      main {
+        grid-template-columns: 1fr;
+      }
+
+      aside {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      .stage {
+        padding: 10px;
+      }
+
+      .timeline {
+        gap: 8px;
+        padding: 8px;
+      }
+
+      .timeline-controls {
+        gap: 8px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header>
+      <h1>Posthog rrweb player</h1>
+      <div class="controls">
+        <span id="status" class="meta">No file loaded</span>
+        <label class="button" for="fileInput">Open file</label>
+        <input id="fileInput" class="file-input" type="file" accept=".json,.jsonl,application/json" />
+      </div>
+    </header>
+
+    <main>
+      <aside>
+        <div id="dropzone" class="dropzone">
+          <strong>Drop a recording file</strong>
+          <span>Supports rrweb event arrays, PostHog JSONL, and wrapped event fields.</span>
+        </div>
+
+        <div class="details">
+          <div class="row"><span>File</span><span id="fileName">-</span></div>
+          <div class="row"><span>Events</span><span id="eventCount">-</span></div>
+          <div class="row"><span>Viewport</span><span id="viewportSize">-</span></div>
+          <div class="row"><span>Duration</span><span id="duration">-</span></div>
+          <div class="row"><span>First event</span><span id="firstEvent">-</span></div>
+          <div class="row"><span>Patch</span><span id="patchStatus">-</span></div>
+        </div>
+
+        <div class="patcher">
+          <h2 class="patcher-title">Patch broken image signed url</h2>
+          <div class="field">
+            <label for="serviceAccountText">Paste service account JSON</label>
+            <textarea id="serviceAccountText" spellcheck="false" placeholder="{ &quot;client_email&quot;: &quot;...&quot;, &quot;private_key&quot;: &quot;-----BEGIN PRIVATE KEY-----...&quot; }"></textarea>
+          </div>
+          <div class="field">
+            <label for="oldBucketInput">Old GCS bucket</label>
+            <input id="oldBucketInput" type="text" />
+          </div>
+          <div class="field">
+            <label for="newBucketInput">New GCS bucket</label>
+            <input id="newBucketInput" type="text" />
+          </div>
+          <div class="field">
+            <label for="expirationInput">Signed URL lifetime, seconds</label>
+            <input id="expirationInput" type="number" min="1" max="604800" value="604800" />
+          </div>
+          <div class="patch-actions">
+            <button id="patchAndPlay" class="button" type="button">Patch & play</button>
+            <a id="downloadPatched" class="secondary-button" href="#" download="recording.patched.json" aria-disabled="true">Download</a>
+          </div>
+        </div>
+
+        <div id="error" class="error" role="alert"></div>
+      </aside>
+
+      <section class="stage">
+        <div id="player" class="empty">Open a JSON or JSONL recording file to start playback.</div>
+        <div id="timeline" class="timeline" aria-label="Replay timeline">
+          <div id="activityStrip" class="activity-strip" aria-label="User activity over time">
+            <div id="playhead" class="playhead"></div>
+          </div>
+          <div class="timeline-controls">
+            <button id="playPause" class="icon-button" type="button" title="Play or pause">▶</button>
+            <span id="currentTime" class="time-label">00:00</span>
+            <input id="timeScrubber" type="range" min="0" max="0" value="0" step="100" aria-label="Choose playback time" />
+            <span id="totalTime" class="time-label">00:00</span>
+            <button id="fullscreenToggle" class="icon-button" type="button" title="Fullscreen">⛶</button>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module">
+    import rrwebPlayer from 'https://cdn.jsdelivr.net/npm/@posthog/rrweb-player@latest/dist/rrweb-player.js'
+    window.rrwebPlayer = rrwebPlayer
+  </script>
+  <script>
+    const fileInput = document.getElementById('fileInput')
+    const dropzone = document.getElementById('dropzone')
+    const playerEl = document.getElementById('player')
+    const statusEl = document.getElementById('status')
+    const errorEl = document.getElementById('error')
+    const fileNameEl = document.getElementById('fileName')
+    const eventCountEl = document.getElementById('eventCount')
+    const viewportSizeEl = document.getElementById('viewportSize')
+    const durationEl = document.getElementById('duration')
+    const firstEventEl = document.getElementById('firstEvent')
+    const patchStatusEl = document.getElementById('patchStatus')
+    const timelineEl = document.getElementById('timeline')
+    const playPauseEl = document.getElementById('playPause')
+    const timeScrubberEl = document.getElementById('timeScrubber')
+    const currentTimeEl = document.getElementById('currentTime')
+    const totalTimeEl = document.getElementById('totalTime')
+    const fullscreenToggleEl = document.getElementById('fullscreenToggle')
+    const activityStripEl = document.getElementById('activityStrip')
+    const playheadEl = document.getElementById('playhead')
+    const serviceAccountText = document.getElementById('serviceAccountText')
+    const oldBucketInput = document.getElementById('oldBucketInput')
+    const newBucketInput = document.getElementById('newBucketInput')
+    const expirationInput = document.getElementById('expirationInput')
+    const patchAndPlayEl = document.getElementById('patchAndPlay')
+    const downloadPatchedEl = document.getElementById('downloadPatched')
+
+    let player = null
+    let loadedValues = []
+    let loadedEvents = []
+    let loadedFileName = 'recording.json'
+    let patchedDownloadUrl = null
+    let totalTimeMs = 0
+    let currentTimeMs = 0
+    let isPlaying = false
+    let isScrubbing = false
+    const URL_RE = /https?:\/\/[^\s<>"')]+/g
+
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0]
+      if (file) loadFile(file)
+    })
+
+    patchAndPlayEl.addEventListener('click', async () => {
+      resetError()
+
+      if (!loadedValues.length) {
+        showPatchError('Open a recording file first.')
+        return
+      }
+
+      try {
+        statusEl.textContent = 'Patching...'
+        patchStatusEl.textContent = 'Working'
+        patchAndPlayEl.disabled = true
+
+        const serviceAccount = await readServiceAccount()
+        const bucketMap = readBucketMap()
+        const expiresSeconds = readExpiration()
+
+        if (!serviceAccount && !bucketMap.size) {
+          throw new Error('Choose a service account or provide a bucket rewrite.')
+        }
+
+        const signer = serviceAccount ? await GcsV4Signer.create(serviceAccount, expiresSeconds) : null
+        const patcher = new GcsUrlPatcher(signer, bucketMap)
+        const stats = { urlsSeen: 0, urlsReplaced: 0, bucketRewrites: 0 }
+        const patchedValues = []
+
+        for (const value of loadedValues) {
+          patchedValues.push(await patchGcsUrls(value, patcher, stats))
+        }
+
+        const patchedEvents = flattenEvents(patchedValues)
+        if (!patchedEvents.length) {
+          throw new Error('Patched JSON did not contain rrweb events.')
+        }
+
+        setPatchedDownload(patchedValues)
+        loadedValues = patchedValues
+        renderPlayer(patchedEvents)
+        updateDetails({ name: patchedFileName(), size: new Blob([serializeValues(patchedValues)]).size }, patchedEvents)
+        patchStatusEl.textContent = `${stats.urlsReplaced} URLs, ${stats.bucketRewrites} buckets`
+        statusEl.textContent = 'Patched'
+      } catch (error) {
+        showPatchError(error.message || String(error))
+        statusEl.textContent = 'Patch failed'
+      } finally {
+        patchAndPlayEl.disabled = false
+      }
+    })
+
+    playPauseEl.addEventListener('click', () => {
+      if (!player) return
+      player.toggle()
+    })
+
+    timeScrubberEl.addEventListener('input', () => {
+      if (!player) return
+      isScrubbing = true
+      currentTimeMs = Number(timeScrubberEl.value)
+      updateTimeline(currentTimeMs)
+      player.goto(currentTimeMs, false)
+    })
+
+    timeScrubberEl.addEventListener('change', () => {
+      if (!player) return
+      currentTimeMs = Number(timeScrubberEl.value)
+      player.goto(currentTimeMs, isPlaying)
+      isScrubbing = false
+    })
+
+    activityStripEl.addEventListener('click', (event) => {
+      if (!player || !totalTimeMs) return
+      const rect = activityStripEl.getBoundingClientRect()
+      const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width))
+      seekTo(ratio * totalTimeMs)
+    })
+
+    fullscreenToggleEl.addEventListener('click', async () => {
+      if (!player) return
+
+      if (isExpanded()) {
+        if (document.fullscreenElement) {
+          await document.exitFullscreen()
+        } else {
+          exitPseudoFullscreen()
+        }
+        return
+      }
+
+      try {
+        await document.querySelector('.stage').requestFullscreen()
+      } catch (_) {
+        enterPseudoFullscreen()
+      }
+    })
+
+    document.addEventListener('fullscreenchange', () => {
+      fullscreenToggleEl.textContent = isExpanded() ? '↙' : '⛶'
+      if (loadedEvents.length) {
+        const wasPlaying = isPlaying
+        renderPlayer(loadedEvents, currentTimeMs, wasPlaying)
+      }
+    })
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && document.querySelector('.stage').classList.contains('pseudo-fullscreen')) {
+        exitPseudoFullscreen()
+        return
+      }
+
+      if (!player || (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight')) {
+        return
+      }
+
+      const activeTag = document.activeElement?.tagName
+      const activeType = document.activeElement?.getAttribute?.('type')
+      if ((activeTag === 'INPUT' && activeType !== 'range') || activeTag === 'TEXTAREA' || activeTag === 'SELECT') {
+        return
+      }
+
+      event.preventDefault()
+      const step = event.shiftKey ? 10000 : 5000
+      seekBy(event.key === 'ArrowRight' ? step : -step)
+    })
+
+    ;['dragenter', 'dragover'].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault()
+        dropzone.classList.add('dragging')
+      })
+    })
+
+    ;['dragleave', 'drop'].forEach((eventName) => {
+      dropzone.addEventListener(eventName, (event) => {
+        event.preventDefault()
+        dropzone.classList.remove('dragging')
+      })
+    })
+
+    dropzone.addEventListener('drop', (event) => {
+      const file = event.dataTransfer.files && event.dataTransfer.files[0]
+      if (file) loadFile(file)
+    })
+
+    async function loadFile(file) {
+      resetError()
+      statusEl.textContent = 'Reading file...'
+      fileNameEl.textContent = file.name
+
+      try {
+        const text = await file.text()
+        const values = parseJsonValues(text)
+        const events = flattenEvents(values)
+
+        if (!events.length) {
+          throw new Error('No rrweb events found in this file.')
+        }
+
+        loadedValues = values
+        loadedFileName = file.name
+        setPatchedDownload(null)
+        patchStatusEl.textContent = '-'
+        renderPlayer(events)
+        updateDetails(file, events)
+        statusEl.textContent = 'Ready'
+      } catch (error) {
+        showError(error.message || String(error))
+        statusEl.textContent = 'Load failed'
+      }
+    }
+
+    function parseJsonValues(text) {
+      const trimmed = text.trim()
+      if (!trimmed) return []
+
+      try {
+        return [JSON.parse(trimmed)]
+      } catch (_) {
+        return trimmed
+          .split(/\r?\n/)
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .map((line, index) => {
+            try {
+              return JSON.parse(line)
+            } catch (error) {
+              throw new Error(`Invalid JSON on line ${index + 1}: ${error.message}`)
+            }
+          })
+      }
+    }
+
+    function readBucketMap() {
+      const oldBucket = oldBucketInput.value.trim()
+      const newBucket = newBucketInput.value.trim()
+      const bucketMap = new Map()
+      if (oldBucket && newBucket && oldBucket !== newBucket) {
+        bucketMap.set(oldBucket, newBucket)
+      }
+      return bucketMap
+    }
+
+    function readExpiration() {
+      const seconds = Number(expirationInput.value)
+      if (!Number.isFinite(seconds) || seconds < 1 || seconds > 604800) {
+        throw new Error('Signed URL lifetime must be between 1 and 604800 seconds.')
+      }
+      return Math.floor(seconds)
+    }
+
+    async function readServiceAccount() {
+      const pasted = serviceAccountText.value.trim()
+      if (pasted) {
+        try {
+          const serviceAccount = JSON.parse(pasted)
+          if (!serviceAccount.client_email || !serviceAccount.private_key) {
+            throw new Error('Service account JSON must contain client_email and private_key.')
+          }
+          return serviceAccount
+        } catch (error) {
+          throw new Error(`Invalid pasted service account JSON: ${error.message}`)
+        }
+      }
+
+      return null
+    }
+
+    class GcsV4Signer {
+      constructor(serviceAccount, privateKey, expiresSeconds) {
+        this.clientEmail = serviceAccount.client_email
+        this.privateKey = privateKey
+        this.expiresSeconds = expiresSeconds
+        this.cache = new Map()
+      }
+
+      static async create(serviceAccount, expiresSeconds) {
+        const privateKey = await crypto.subtle.importKey(
+          'pkcs8',
+          pemToArrayBuffer(serviceAccount.private_key),
+          { name: 'RSASSA-PKCS1-v1_5', hash: 'SHA-256' },
+          false,
+          ['sign']
+        )
+        return new GcsV4Signer(serviceAccount, privateKey, expiresSeconds)
+      }
+
+      async signUrl(bucket, objectName) {
+        const cacheKey = `${bucket}\n${objectName}`
+        if (this.cache.has(cacheKey)) return this.cache.get(cacheKey)
+
+        const now = new Date()
+        const datestamp = utcDateStamp(now)
+        const timestamp = utcTimestamp(now)
+        const credentialScope = `${datestamp}/auto/storage/goog4_request`
+        const credential = `${this.clientEmail}/${credentialScope}`
+        const canonicalUri = `/${gcsEscape(bucket)}/${gcsEscape(objectName, '/~')}`
+        const queryParams = {
+          'X-Goog-Algorithm': 'GOOG4-RSA-SHA256',
+          'X-Goog-Credential': credential,
+          'X-Goog-Date': timestamp,
+          'X-Goog-Expires': String(this.expiresSeconds),
+          'X-Goog-SignedHeaders': 'host',
+        }
+        const canonicalQuery = Object.entries(queryParams)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, value]) => `${gcsEscape(key)}=${gcsEscape(value)}`)
+          .join('&')
+        const canonicalRequest = [
+          'GET',
+          canonicalUri,
+          canonicalQuery,
+          'host:storage.googleapis.com\n',
+          'host',
+          'UNSIGNED-PAYLOAD',
+        ].join('\n')
+        const stringToSign = [
+          'GOOG4-RSA-SHA256',
+          timestamp,
+          credentialScope,
+          await sha256Hex(canonicalRequest),
+        ].join('\n')
+        const signature = await signHex(this.privateKey, stringToSign)
+        const signedUrl = `https://storage.googleapis.com${canonicalUri}?${canonicalQuery}&X-Goog-Signature=${signature}`
+        this.cache.set(cacheKey, signedUrl)
+        return signedUrl
+      }
+    }
+
+    class GcsUrlPatcher {
+      constructor(signer, bucketMap) {
+        this.signer = signer
+        this.bucketMap = bucketMap
+      }
+
+      async patchUrl(url, stats) {
+        const gcsObject = parseGcsUrl(url)
+        if (!gcsObject) return url
+
+        stats.urlsSeen += 1
+        const targetBucket = this.bucketMap.get(gcsObject.bucket) || gcsObject.bucket
+        if (targetBucket !== gcsObject.bucket) {
+          stats.bucketRewrites += 1
+        }
+
+        const patchedUrl = this.signer
+          ? await this.signer.signUrl(targetBucket, gcsObject.objectName)
+          : buildUnsignedGcsUrl(targetBucket, gcsObject.objectName)
+
+        if (patchedUrl !== url) {
+          stats.urlsReplaced += 1
+        }
+        return patchedUrl
+      }
+    }
+
+    async function patchGcsUrls(value, patcher, stats) {
+      if (typeof value === 'string') {
+        return patchGcsUrlsInString(value, patcher, stats)
+      }
+
+      if (Array.isArray(value)) {
+        const output = []
+        for (const item of value) {
+          output.push(await patchGcsUrls(item, patcher, stats))
+        }
+        return output
+      }
+
+      if (value && typeof value === 'object') {
+        const output = {}
+        for (const [key, item] of Object.entries(value)) {
+          output[key] = await patchGcsUrls(item, patcher, stats)
+        }
+        return output
+      }
+
+      return value
+    }
+
+    async function patchGcsUrlsInString(value, patcher, stats) {
+      let output = ''
+      let lastIndex = 0
+
+      for (const match of value.matchAll(URL_RE)) {
+        output += value.slice(lastIndex, match.index)
+        output += await patcher.patchUrl(match[0], stats)
+        lastIndex = match.index + match[0].length
+      }
+
+      return output + value.slice(lastIndex)
+    }
+
+    function parseGcsUrl(url) {
+      let parsed
+      try {
+        parsed = new URL(url)
+      } catch (_) {
+        return null
+      }
+
+      const host = parsed.hostname.toLowerCase()
+      const path = parsed.pathname.replace(/^\/+/, '')
+
+      if (host === 'storage.googleapis.com' || host === 'storage.cloud.google.com') {
+        const slash = path.indexOf('/')
+        if (slash <= 0) return null
+        return {
+          bucket: decodeURIComponent(path.slice(0, slash)),
+          objectName: decodeURIComponent(path.slice(slash + 1)),
+        }
+      }
+
+      if (host.endsWith('.storage.googleapis.com')) {
+        const bucket = host.slice(0, -'.storage.googleapis.com'.length)
+        if (!bucket || !path) return null
+        return { bucket, objectName: decodeURIComponent(path) }
+      }
+
+      if (host === 'www.googleapis.com' && path.startsWith('download/storage/v1/b/')) {
+        const parts = path.split('/')
+        if (parts.length >= 7 && parts[5] === 'o') {
+          return {
+            bucket: decodeURIComponent(parts[4]),
+            objectName: decodeURIComponent(parts.slice(6).join('/')),
+          }
+        }
+      }
+
+      return null
+    }
+
+    function buildUnsignedGcsUrl(bucket, objectName) {
+      return `https://storage.googleapis.com/${gcsEscape(bucket)}/${gcsEscape(objectName, '/~')}`
+    }
+
+    function gcsEscape(value, safe = '') {
+      return encodeURIComponent(value)
+        .replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)
+        .replace(/%2F/g, safe.includes('/') ? '/' : '%2F')
+        .replace(/%7E/g, safe.includes('~') ? '~' : '%7E')
+    }
+
+    function pemToArrayBuffer(pem) {
+      const base64 = pem
+        .replace(/-----BEGIN PRIVATE KEY-----/g, '')
+        .replace(/-----END PRIVATE KEY-----/g, '')
+        .replace(/\s+/g, '')
+      const binary = atob(base64)
+      const bytes = new Uint8Array(binary.length)
+      for (let index = 0; index < binary.length; index += 1) {
+        bytes[index] = binary.charCodeAt(index)
+      }
+      return bytes.buffer
+    }
+
+    async function sha256Hex(value) {
+      const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value))
+      return bytesToHex(new Uint8Array(digest))
+    }
+
+    async function signHex(privateKey, value) {
+      const signature = await crypto.subtle.sign(
+        'RSASSA-PKCS1-v1_5',
+        privateKey,
+        new TextEncoder().encode(value)
+      )
+      return bytesToHex(new Uint8Array(signature))
+    }
+
+    function bytesToHex(bytes) {
+      return [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('')
+    }
+
+    function utcDateStamp(date) {
+      return [
+        date.getUTCFullYear(),
+        String(date.getUTCMonth() + 1).padStart(2, '0'),
+        String(date.getUTCDate()).padStart(2, '0'),
+      ].join('')
+    }
+
+    function utcTimestamp(date) {
+      return `${utcDateStamp(date)}T${String(date.getUTCHours()).padStart(2, '0')}${String(date.getUTCMinutes()).padStart(2, '0')}${String(date.getUTCSeconds()).padStart(2, '0')}Z`
+    }
+
+    function serializeValues(values) {
+      if (values.length === 1) return JSON.stringify(values[0], null, 2)
+      return values.map((value) => JSON.stringify(value)).join('\n')
+    }
+
+    function patchedFileName() {
+      return loadedFileName.replace(/(\.jsonl?|$)/i, '.patched$1') || 'recording.patched.json'
+    }
+
+    function setPatchedDownload(values) {
+      if (patchedDownloadUrl) {
+        URL.revokeObjectURL(patchedDownloadUrl)
+        patchedDownloadUrl = null
+      }
+
+      if (!values) {
+        downloadPatchedEl.href = '#'
+        downloadPatchedEl.setAttribute('aria-disabled', 'true')
+        return
+      }
+
+      const serialized = serializeValues(values)
+      patchedDownloadUrl = URL.createObjectURL(new Blob([serialized], { type: 'application/json' }))
+      downloadPatchedEl.href = patchedDownloadUrl
+      downloadPatchedEl.download = patchedFileName()
+      downloadPatchedEl.removeAttribute('aria-disabled')
+    }
+
+    function flattenEvents(values) {
+      const events = []
+
+      const visit = (value) => {
+        if (Array.isArray(value)) {
+          value.forEach(visit)
+          return
+        }
+
+        if (!value || typeof value !== 'object') return
+
+        for (const key of ['events', 'snapshots', 'snapshot_data']) {
+          if (Array.isArray(value[key])) {
+            value[key].forEach(visit)
+            return
+          }
+        }
+
+        if ('type' in value && 'timestamp' in value) {
+          events.push(value)
+          return
+        }
+
+        if (value.data && typeof value.data === 'object' && !Array.isArray(value.data)) {
+          visit(value.data)
+        }
+      }
+
+      values.forEach(visit)
+      return events.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
+    }
+
+    function renderPlayer(events, seekToMs = 0, playAfterSeek = false) {
+      if (player && typeof player.pause === 'function') {
+        player.pause()
+      }
+
+      loadedEvents = events
+      playerEl.classList.remove('empty')
+      playerEl.textContent = ''
+
+      const viewport = getRecordedViewport(events)
+      const stageRect = document.querySelector('.stage').getBoundingClientRect()
+      const expanded = isExpanded()
+      const width = expanded ? Math.max(viewport.width, Math.floor(stageRect.width - 24)) : viewport.width
+      const height = expanded ? Math.max(viewport.height, Math.floor(stageRect.height - 86)) : viewport.height
+
+      const Player = window.rrwebPlayer
+      if (!Player) {
+        throw new Error('rrweb player library is still loading. Try opening the file again.')
+      }
+
+      player = new Player({
+        target: playerEl,
+        props: {
+          events,
+          width,
+          height,
+          maxScale: 1,
+          autoPlay: false,
+          showController: false,
+        },
+      })
+
+      const meta = typeof player.getMetaData === 'function' ? player.getMetaData() : null
+      totalTimeMs = meta && Number.isFinite(meta.totalTime) ? meta.totalTime : getDurationMs(events)
+      currentTimeMs = 0
+      isPlaying = false
+      timelineEl.classList.add('ready')
+      timeScrubberEl.max = String(Math.max(0, totalTimeMs))
+      timeScrubberEl.value = String(Math.max(0, Math.min(totalTimeMs, seekToMs)))
+      totalTimeEl.textContent = formatClock(totalTimeMs)
+      renderActivityStrip(events)
+      updateTimeline(Number(timeScrubberEl.value))
+      bindPlayerTimelineEvents()
+
+      if (seekToMs > 0 || playAfterSeek) {
+        player.goto(Number(timeScrubberEl.value), playAfterSeek)
+      }
+    }
+
+    function bindPlayerTimelineEvents() {
+      if (!player || typeof player.addEventListener !== 'function') return
+
+      player.addEventListener('ui-update-current-time', (event) => {
+        const next = eventNumber(event)
+        if (!Number.isFinite(next)) return
+        currentTimeMs = Math.max(0, Math.min(totalTimeMs, next))
+        if (!isScrubbing) updateTimeline(currentTimeMs)
+      })
+
+      player.addEventListener('ui-update-player-state', (event) => {
+        const payload = event && event.payload
+        const state = typeof payload === 'string' ? payload : payload && payload.state
+        isPlaying = state === 'playing' || state === 'play'
+        playPauseEl.textContent = isPlaying ? '❚❚' : '▶'
+      })
+    }
+
+    function eventNumber(event) {
+      if (typeof event === 'number') return event
+      if (!event || typeof event !== 'object') return NaN
+      const payload = event.payload
+      if (typeof payload === 'number') return payload
+      if (payload && typeof payload === 'object') {
+        for (const key of ['currentTime', 'timeOffset', 'offset', 'time']) {
+          if (typeof payload[key] === 'number') return payload[key]
+        }
+      }
+      return NaN
+    }
+
+    function updateTimeline(ms) {
+      timeScrubberEl.value = String(Math.max(0, Math.min(totalTimeMs, ms)))
+      currentTimeEl.textContent = formatClock(ms)
+      playheadEl.style.left = `${totalTimeMs ? (Math.max(0, Math.min(totalTimeMs, ms)) / totalTimeMs) * 100 : 0}%`
+    }
+
+    function seekBy(deltaMs) {
+      seekTo(currentTimeMs + deltaMs)
+    }
+
+    function seekTo(ms) {
+      if (!player) return
+      currentTimeMs = Math.max(0, Math.min(totalTimeMs, ms))
+      player.goto(currentTimeMs, isPlaying)
+      updateTimeline(currentTimeMs)
+    }
+
+    function renderActivityStrip(events) {
+      activityStripEl.querySelectorAll('.activity-marker').forEach((marker) => marker.remove())
+
+      if (!events.length || !totalTimeMs) return
+
+      const firstTimestamp = Number(events[0].timestamp || 0)
+      const bins = new Array(120).fill(0)
+      for (const event of events) {
+        if (!isUserActivityEvent(event)) continue
+        const offset = Math.max(0, Number(event.timestamp || 0) - firstTimestamp)
+        const index = Math.min(bins.length - 1, Math.floor((offset / totalTimeMs) * bins.length))
+        bins[index] += 1
+      }
+
+      const max = Math.max(1, ...bins)
+      bins.forEach((count, index) => {
+        if (!count) return
+        const marker = document.createElement('span')
+        marker.className = 'activity-marker'
+        marker.style.left = `${(index / bins.length) * 100}%`
+        marker.style.width = `${Math.max(0.35, 100 / bins.length)}%`
+        marker.style.height = `${Math.max(4, 12 * (count / max))}px`
+        marker.style.opacity = String(Math.min(1, 0.35 + count / max))
+        activityStripEl.insertBefore(marker, playheadEl)
+      })
+    }
+
+    function isUserActivityEvent(event) {
+      const data = event && event.data
+      if (!data) return false
+
+      if (event.type === 3) {
+        return [1, 2, 3, 5, 6, 7, 12].includes(data.source)
+      }
+
+      return event.type === 5 || event.type === 6
+    }
+
+    function updateDetails(file, events) {
+      const first = events[0]
+      const last = events[events.length - 1]
+      const durationMs = Math.max(0, Number(last.timestamp || 0) - Number(first.timestamp || 0))
+
+      eventCountEl.textContent = events.length.toLocaleString()
+      const viewport = getRecordedViewport(events)
+      viewportSizeEl.textContent = `${viewport.width} x ${viewport.height}`
+      durationEl.textContent = formatDuration(durationMs)
+      firstEventEl.textContent = first.timestamp ? new Date(first.timestamp).toLocaleString() : '-'
+      fileNameEl.textContent = `${file.name} (${formatBytes(file.size)})`
+    }
+
+    function formatDuration(ms) {
+      const seconds = Math.round(ms / 1000)
+      const minutes = Math.floor(seconds / 60)
+      const remaining = seconds % 60
+      if (minutes < 1) return `${remaining}s`
+      return `${minutes}m ${remaining}s`
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${bytes} B`
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+      return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+    }
+
+    function resetError() {
+      errorEl.textContent = ''
+    }
+
+    function showError(message) {
+      errorEl.textContent = message
+      playerEl.classList.add('empty')
+      playerEl.textContent = 'The selected file could not be loaded.'
+      timelineEl.classList.remove('ready')
+    }
+
+    function isExpanded() {
+      return Boolean(document.fullscreenElement) || document.querySelector('.stage').classList.contains('pseudo-fullscreen')
+    }
+
+    function enterPseudoFullscreen() {
+      document.body.classList.add('player-expanded')
+      document.querySelector('.stage').classList.add('pseudo-fullscreen')
+      fullscreenToggleEl.textContent = '↙'
+      if (loadedEvents.length) {
+        renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+      }
+    }
+
+    function exitPseudoFullscreen() {
+      document.body.classList.remove('player-expanded')
+      document.querySelector('.stage').classList.remove('pseudo-fullscreen')
+      fullscreenToggleEl.textContent = '⛶'
+      if (loadedEvents.length) {
+        renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+      }
+    }
+
+    function getDurationMs(events) {
+      if (!events.length) return 0
+      return Math.max(0, Number(events[events.length - 1].timestamp || 0) - Number(events[0].timestamp || 0))
+    }
+
+    function getRecordedViewport(events) {
+      const metaEvent = events.find((event) => event.type === 4 && event.data)
+      const resizeEvent = [...events].reverse().find((event) => (
+        event.type === 3 &&
+        event.data &&
+        event.data.source === 4 &&
+        Number.isFinite(Number(event.data.width)) &&
+        Number.isFinite(Number(event.data.height))
+      ))
+
+      const source = metaEvent && metaEvent.data ? metaEvent.data : (resizeEvent && resizeEvent.data) || {}
+      const width = Math.max(320, Math.floor(Number(source.width) || 1024))
+      const height = Math.max(420, Math.floor(Number(source.height) || 576))
+      return { width, height }
+    }
+
+    function formatClock(ms) {
+      const totalSeconds = Math.max(0, Math.floor(ms / 1000))
+      const hours = Math.floor(totalSeconds / 3600)
+      const minutes = Math.floor((totalSeconds % 3600) / 60)
+      const seconds = totalSeconds % 60
+      const two = (value) => String(value).padStart(2, '0')
+      if (hours) return `${hours}:${two(minutes)}:${two(seconds)}`
+      return `${two(minutes)}:${two(seconds)}`
+    }
+  </script>
+</body>
+</html>
