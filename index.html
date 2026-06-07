@@ -176,6 +176,17 @@
       font: inherit;
     }
 
+    .field select {
+      width: 100%;
+      min-height: 34px;
+      padding: 6px 9px;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      background: #fff;
+      color: var(--text);
+      font: inherit;
+    }
+
     .field textarea {
       width: 100%;
       min-height: 116px;
@@ -449,6 +460,15 @@
         </div>
 
         <div class="patcher">
+          <div class="field">
+            <label for="windowSelect">Recording window</label>
+            <select id="windowSelect" disabled>
+              <option value="">No recording loaded</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="patcher">
           <h2 class="patcher-title">Patch broken image signed url</h2>
           <div class="field">
             <label for="serviceAccountText">Paste service account JSON</label>
@@ -518,6 +538,7 @@
     const fullscreenToggleEl = document.getElementById('fullscreenToggle')
     const activityStripEl = document.getElementById('activityStrip')
     const playheadEl = document.getElementById('playhead')
+    const windowSelectEl = document.getElementById('windowSelect')
     const serviceAccountText = document.getElementById('serviceAccountText')
     const oldBucketInput = document.getElementById('oldBucketInput')
     const newBucketInput = document.getElementById('newBucketInput')
@@ -528,7 +549,9 @@
 
     let player = null
     let loadedValues = []
+    let allEvents = []
     let loadedEvents = []
+    let selectedWindowId = ''
     let loadedFileName = 'recording.json'
     let loadedFileSize = 0
     let patchedDownloadUrl = null
@@ -569,7 +592,7 @@
         if (loadedFileSize >= LARGE_FILE_LIVE_PATCH_THRESHOLD && canUseServiceWorkerPatcher()) {
           await configureServiceWorkerPatcher({ serviceAccount, bucketMap, expiresSeconds })
           setPatchedDownload(null)
-          renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+          renderPlayer(getSelectedWindowEvents(), currentTimeMs, isPlaying)
           patchStatusEl.textContent = 'Live patch enabled for large file'
           statusEl.textContent = 'Ready'
           return
@@ -588,8 +611,11 @@
 
         setPatchedDownload(patchedValues)
         loadedValues = patchedValues
-        renderPlayer(patchedEvents)
-        updateDetails({ name: patchedFileName(), size: new Blob([serializeValues(patchedValues)]).size }, patchedEvents)
+        allEvents = patchedEvents
+        setupWindowSelect(patchedEvents, selectedWindowId)
+        const selectedEvents = getSelectedWindowEvents()
+        renderPlayer(selectedEvents)
+        updateDetails({ name: patchedFileName(), size: new Blob([serializeValues(patchedValues)]).size }, selectedEvents)
         patchStatusEl.textContent = `${stats.urlsReplaced} URLs, ${stats.bucketRewrites} buckets`
         statusEl.textContent = 'Patched'
       } catch (error) {
@@ -622,7 +648,7 @@
         }
 
         await configureServiceWorkerPatcher({ serviceAccount, bucketMap, expiresSeconds })
-        renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+        renderPlayer(getSelectedWindowEvents(), currentTimeMs, isPlaying)
         patchStatusEl.textContent = 'Live patch enabled'
         statusEl.textContent = 'Ready'
       } catch (error) {
@@ -636,6 +662,19 @@
     playPauseEl.addEventListener('click', () => {
       if (!player) return
       player.toggle()
+    })
+
+    windowSelectEl.addEventListener('change', () => {
+      if (!allEvents.length) return
+      selectedWindowId = windowSelectEl.value
+      const selectedEvents = getSelectedWindowEvents()
+      if (!selectedEvents.length) {
+        showError('No rrweb events found for the selected window.')
+        return
+      }
+      renderPlayer(selectedEvents)
+      updateDetails({ name: loadedFileName, size: loadedFileSize }, selectedEvents)
+      statusEl.textContent = 'Ready'
     })
 
     timeScrubberEl.addEventListener('input', () => {
@@ -742,12 +781,15 @@
         }
 
         loadedValues = values
+        allEvents = events
         loadedFileName = file.name
         loadedFileSize = file.size
+        setupWindowSelect(events)
         setPatchedDownload(null)
         patchStatusEl.textContent = '-'
-        renderPlayer(events)
-        updateDetails(file, events)
+        const selectedEvents = getSelectedWindowEvents()
+        renderPlayer(selectedEvents)
+        updateDetails(file, selectedEvents)
         statusEl.textContent = 'Ready'
       } catch (error) {
         showError(error.message || String(error))
@@ -1203,6 +1245,74 @@
 
       values.forEach(visit)
       return events.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
+    }
+
+    function setupWindowSelect(events, preferredWindowId = '') {
+      const windows = getWindowSummaries(events)
+      windowSelectEl.textContent = ''
+
+      if (!windows.length) {
+        selectedWindowId = ''
+        windowSelectEl.disabled = true
+        windowSelectEl.append(new Option('No recording loaded', ''))
+        return
+      }
+
+      const preferred = preferredWindowId && windows.find((windowInfo) => windowInfo.id === preferredWindowId)
+      selectedWindowId = (preferred || windows[0]).id
+      windowSelectEl.disabled = windows.length < 2
+
+      for (const windowInfo of windows) {
+        const label = `Window ${windowInfo.label} - ${windowInfo.count.toLocaleString()} events, ${formatDuration(windowInfo.durationMs)}`
+        windowSelectEl.append(new Option(label, windowInfo.id, false, windowInfo.id === selectedWindowId))
+      }
+    }
+
+    function getWindowSummaries(events) {
+      const groups = new Map()
+      for (const event of events) {
+        const id = eventWindowId(event)
+        if (!groups.has(id)) {
+          groups.set(id, {
+            id,
+            label: id === '__default__' ? 'default' : id,
+            count: 0,
+            first: Number.POSITIVE_INFINITY,
+            last: 0,
+            fullSnapshots: 0,
+          })
+        }
+
+        const summary = groups.get(id)
+        const timestamp = Number(event.timestamp || 0)
+        summary.count += 1
+        summary.first = Math.min(summary.first, timestamp)
+        summary.last = Math.max(summary.last, timestamp)
+        if (event.type === 2) summary.fullSnapshots += 1
+      }
+
+      return [...groups.values()]
+        .map((summary) => ({
+          ...summary,
+          durationMs: Math.max(0, summary.last - summary.first),
+        }))
+        .sort((a, b) => {
+          if (b.fullSnapshots !== a.fullSnapshots) return b.fullSnapshots - a.fullSnapshots
+          if (b.count !== a.count) return b.count - a.count
+          return String(a.label).localeCompare(String(b.label))
+        })
+    }
+
+    function eventWindowId(event) {
+      if (event && event.windowId !== undefined && event.windowId !== null) {
+        return String(event.windowId)
+      }
+      return '__default__'
+    }
+
+    function getSelectedWindowEvents() {
+      if (!selectedWindowId) return []
+      return allEvents.filter((event) => eventWindowId(event) === selectedWindowId)
     }
 
     function renderPlayer(events, seekToMs = 0, playAfterSeek = false) {
