@@ -554,7 +554,12 @@
     let loadedValues = []
     let allEvents = []
     let loadedEvents = []
+    let windowSummaries = []
+    let activeWindowSegments = []
     let selectedWindowId = ''
+    let renderedWindowId = ''
+    let sessionStartTimestamp = 0
+    let sessionDurationMs = 0
     let loadedFileName = 'recording.json'
     let loadedFileSize = 0
     let patchedDownloadUrl = null
@@ -565,6 +570,7 @@
     let patchWorker = null
     let resizeRenderTimer = null
     const keyboardShortcutTargets = new WeakSet()
+    const AUTO_WINDOW_ID = '__auto_active__'
     const LARGE_FILE_LIVE_PATCH_THRESHOLD = 100 * 1024 * 1024
     const URL_RE = /https?:\/\/[^\s<>"')]+/g
 
@@ -597,7 +603,7 @@
         if (loadedFileSize >= LARGE_FILE_LIVE_PATCH_THRESHOLD && canUseServiceWorkerPatcher()) {
           await configureServiceWorkerPatcher({ serviceAccount, bucketMap, expiresSeconds })
           setPatchedDownload(null)
-          renderPlayer(getSelectedWindowEvents(), currentTimeMs, isPlaying)
+          renderCurrentWindow(currentTimeMs, isPlaying)
           patchStatusEl.textContent = 'Live patch enabled for large file'
           statusEl.textContent = 'Ready'
           return
@@ -618,8 +624,8 @@
         loadedValues = patchedValues
         allEvents = patchedEvents
         setupWindowSelect(patchedEvents, selectedWindowId)
-        const selectedEvents = getSelectedWindowEvents()
-        renderPlayer(selectedEvents)
+        const selectedEvents = getCurrentWindowEvents(currentTimeMs)
+        renderCurrentWindow(0)
         updateDetails({ name: patchedFileName(), size: new Blob([serializeValues(patchedValues)]).size }, selectedEvents)
         patchStatusEl.textContent = `${stats.urlsReplaced} URLs, ${stats.bucketRewrites} buckets`
         statusEl.textContent = 'Patched'
@@ -653,7 +659,7 @@
         }
 
         await configureServiceWorkerPatcher({ serviceAccount, bucketMap, expiresSeconds })
-        renderPlayer(getSelectedWindowEvents(), currentTimeMs, isPlaying)
+        renderCurrentWindow(currentTimeMs, isPlaying)
         patchStatusEl.textContent = 'Live patch enabled'
         statusEl.textContent = 'Ready'
       } catch (error) {
@@ -672,12 +678,12 @@
     windowSelectEl.addEventListener('change', () => {
       if (!allEvents.length) return
       selectedWindowId = windowSelectEl.value
-      const selectedEvents = getSelectedWindowEvents()
+      const selectedEvents = getCurrentWindowEvents(currentTimeMs)
       if (!selectedEvents.length) {
         showError('No rrweb events found for the selected window.')
         return
       }
-      renderPlayer(selectedEvents)
+      renderCurrentWindow(currentTimeMs)
       updateDetails({ name: loadedFileName, size: loadedFileSize }, selectedEvents)
       statusEl.textContent = 'Ready'
     })
@@ -685,15 +691,12 @@
     timeScrubberEl.addEventListener('input', () => {
       if (!player) return
       isScrubbing = true
-      currentTimeMs = Number(timeScrubberEl.value)
-      updateTimeline(currentTimeMs)
-      player.goto(currentTimeMs, false)
+      seekTo(Number(timeScrubberEl.value), false)
     })
 
     timeScrubberEl.addEventListener('change', () => {
       if (!player) return
-      currentTimeMs = Number(timeScrubberEl.value)
-      player.goto(currentTimeMs, isPlaying)
+      seekTo(Number(timeScrubberEl.value), isPlaying)
       isScrubbing = false
       timeScrubberEl.blur()
     })
@@ -728,7 +731,7 @@
       fullscreenToggleEl.textContent = isExpanded() ? '↙' : '⛶'
       if (loadedEvents.length) {
         const wasPlaying = isPlaying
-        renderPlayer(loadedEvents, currentTimeMs, wasPlaying)
+        renderCurrentWindow(currentTimeMs, wasPlaying)
       }
     })
 
@@ -737,7 +740,7 @@
       window.clearTimeout(resizeRenderTimer)
       resizeRenderTimer = window.setTimeout(() => {
         const wasPlaying = isPlaying
-        renderPlayer(loadedEvents, currentTimeMs, wasPlaying)
+        renderCurrentWindow(currentTimeMs, wasPlaying)
       }, 150)
     })
 
@@ -805,8 +808,8 @@
         setupWindowSelect(events)
         setPatchedDownload(null)
         patchStatusEl.textContent = '-'
-        const selectedEvents = getSelectedWindowEvents()
-        renderPlayer(selectedEvents)
+        const selectedEvents = getCurrentWindowEvents(0)
+        renderCurrentWindow(0)
         updateDetails(file, selectedEvents)
         statusEl.textContent = 'Ready'
       } catch (error) {
@@ -1266,21 +1269,32 @@
     }
 
     function setupWindowSelect(events, preferredWindowId = '') {
-      const windows = getWindowSummaries(events)
+      windowSummaries = getWindowSummaries(events)
+      sessionStartTimestamp = events.length ? Number(events[0].timestamp || 0) : 0
+      sessionDurationMs = getDurationMs(events)
+      activeWindowSegments = getActiveWindowSegments(events, windowSummaries)
       windowSelectEl.textContent = ''
 
-      if (!windows.length) {
+      if (!windowSummaries.length) {
         selectedWindowId = ''
+        renderedWindowId = ''
         windowSelectEl.disabled = true
         windowSelectEl.append(new Option('No recording loaded', ''))
         return
       }
 
-      const preferred = preferredWindowId && windows.find((windowInfo) => windowInfo.id === preferredWindowId)
-      selectedWindowId = (preferred || windows[0]).id
-      windowSelectEl.disabled = windows.length < 2
+      const preferred = preferredWindowId && (
+        preferredWindowId === AUTO_WINDOW_ID ||
+        windowSummaries.find((windowInfo) => windowInfo.id === preferredWindowId)
+      )
+      selectedWindowId = preferred || (windowSummaries.length > 1 ? AUTO_WINDOW_ID : windowSummaries[0].id)
+      windowSelectEl.disabled = windowSummaries.length < 2
 
-      for (const windowInfo of windows) {
+      if (windowSummaries.length > 1) {
+        windowSelectEl.append(new Option('Auto active window', AUTO_WINDOW_ID, false, selectedWindowId === AUTO_WINDOW_ID))
+      }
+
+      for (const windowInfo of windowSummaries) {
         const label = `Window ${windowInfo.label} - ${windowInfo.count.toLocaleString()} events, ${formatDuration(windowInfo.durationMs)}`
         windowSelectEl.append(new Option(label, windowInfo.id, false, windowInfo.id === selectedWindowId))
       }
@@ -1328,17 +1342,82 @@
       return '__default__'
     }
 
-    function getSelectedWindowEvents() {
-      if (!selectedWindowId) return []
-      return allEvents.filter((event) => eventWindowId(event) === selectedWindowId)
+    function getActiveWindowSegments(events, windows) {
+      if (!events.length || !windows.length) return []
+
+      const segments = [{ startMs: 0, windowId: windows[0].id }]
+      for (const event of events) {
+        const tag = typeof event.data?.tag === 'string' ? event.data.tag.toLowerCase() : ''
+        if (event.type !== 5 || tag !== 'window visible') continue
+
+        const windowId = eventWindowId(event)
+        const startMs = Math.max(0, Number(event.timestamp || 0) - sessionStartTimestamp)
+        const previous = segments[segments.length - 1]
+        if (previous && previous.windowId === windowId) continue
+        if (previous && previous.startMs === startMs) {
+          previous.windowId = windowId
+        } else {
+          segments.push({ startMs, windowId })
+        }
+      }
+
+      return segments
     }
 
-    function renderPlayer(events, seekToMs = 0, playAfterSeek = false) {
+    function getWindowIdForTime(ms) {
+      if (!selectedWindowId) return ''
+      if (selectedWindowId !== AUTO_WINDOW_ID) return selectedWindowId
+      if (!activeWindowSegments.length) return windowSummaries[0]?.id || ''
+
+      const targetMs = Math.max(0, Number(ms) || 0)
+      let active = activeWindowSegments[0].windowId
+      for (const segment of activeWindowSegments) {
+        if (segment.startMs > targetMs) break
+        active = segment.windowId
+      }
+      return active
+    }
+
+    function getWindowEvents(windowId) {
+      if (!windowId) return []
+      return allEvents.filter((event) => eventWindowId(event) === windowId)
+    }
+
+    function getCurrentWindowEvents(ms = currentTimeMs) {
+      return getWindowEvents(getWindowIdForTime(ms))
+    }
+
+    function getWindowStartOffset(events) {
+      if (!events.length || !sessionStartTimestamp) return 0
+      return Math.max(0, Number(events[0].timestamp || 0) - sessionStartTimestamp)
+    }
+
+    function getTimelineDurationMs() {
+      return sessionDurationMs || getDurationMs(allEvents)
+    }
+
+    function toLocalWindowOffset(events, globalMs) {
+      return Math.max(0, Math.min(getDurationMs(events), (Number(globalMs) || 0) - getWindowStartOffset(events)))
+    }
+
+    function toGlobalOffset(events, localMs) {
+      return Math.max(0, Math.min(getTimelineDurationMs(), getWindowStartOffset(events) + (Number(localMs) || 0)))
+    }
+
+    function renderCurrentWindow(seekToMs = currentTimeMs, playAfterSeek = false) {
+      const windowId = getWindowIdForTime(seekToMs)
+      const events = getWindowEvents(windowId)
+      if (!events.length) return
+      renderPlayer(events, seekToMs, playAfterSeek, windowId)
+    }
+
+    function renderPlayer(events, seekToMs = 0, playAfterSeek = false, windowId = eventWindowId(events[0])) {
       if (player && typeof player.pause === 'function') {
         player.pause()
       }
 
       loadedEvents = events
+      renderedWindowId = windowId
       playerEl.classList.remove('empty')
       playerEl.textContent = ''
 
@@ -1363,20 +1442,22 @@
       })
 
       const meta = typeof player.getMetaData === 'function' ? player.getMetaData() : null
-      totalTimeMs = meta && Number.isFinite(meta.totalTime) ? meta.totalTime : getDurationMs(events)
+      const localDurationMs = meta && Number.isFinite(meta.totalTime) ? meta.totalTime : getDurationMs(events)
+      totalTimeMs = getTimelineDurationMs() || localDurationMs
       currentTimeMs = Math.max(0, Math.min(totalTimeMs, Number(seekToMs) || 0))
+      const localSeekMs = toLocalWindowOffset(events, currentTimeMs)
       isPlaying = false
       timelineEl.classList.add('ready')
       timeScrubberEl.max = String(Math.max(0, totalTimeMs))
       timeScrubberEl.value = String(currentTimeMs)
       totalTimeEl.textContent = formatClock(totalTimeMs)
-      renderActivityStrip(events)
+      renderActivityStrip(selectedWindowId === AUTO_WINDOW_ID ? allEvents : events)
       updateTimeline(Number(timeScrubberEl.value))
       bindPlayerTimelineEvents()
       bindReplayFrameKeyboardShortcuts()
 
       if (seekToMs > 0 || playAfterSeek) {
-        player.goto(currentTimeMs, playAfterSeek)
+        player.goto(localSeekMs, playAfterSeek)
         bindReplayFrameKeyboardShortcuts()
       }
     }
@@ -1438,8 +1519,9 @@
       player.addEventListener('ui-update-current-time', (event) => {
         const next = eventNumber(event)
         if (!Number.isFinite(next)) return
-        currentTimeMs = Math.max(0, Math.min(totalTimeMs, next))
+        currentTimeMs = toGlobalOffset(loadedEvents, next)
         if (!isScrubbing) updateTimeline(currentTimeMs)
+        switchActiveWindowIfNeeded()
       })
 
       player.addEventListener('ui-update-player-state', (event) => {
@@ -1474,13 +1556,26 @@
       seekTo(baseTime + deltaMs)
     }
 
-    function seekTo(ms) {
+    function seekTo(ms, playAfterSeek = isPlaying) {
       if (!player) return
       currentTimeMs = Math.max(0, Math.min(totalTimeMs, ms))
-      player.goto(currentTimeMs, isPlaying)
+      const nextWindowId = getWindowIdForTime(currentTimeMs)
+      if (nextWindowId && nextWindowId !== renderedWindowId) {
+        renderCurrentWindow(currentTimeMs, playAfterSeek)
+        return
+      }
+
+      player.goto(toLocalWindowOffset(loadedEvents, currentTimeMs), playAfterSeek)
       updateTimeline(currentTimeMs)
       stageEl.focus({ preventScroll: true })
       bindReplayFrameKeyboardShortcuts()
+    }
+
+    function switchActiveWindowIfNeeded() {
+      if (selectedWindowId !== AUTO_WINDOW_ID) return
+      const nextWindowId = getWindowIdForTime(currentTimeMs)
+      if (!nextWindowId || nextWindowId === renderedWindowId) return
+      renderCurrentWindow(currentTimeMs, isPlaying)
     }
 
     function renderActivityStrip(events) {
@@ -1568,7 +1663,7 @@
       stageEl.classList.add('pseudo-fullscreen')
       fullscreenToggleEl.textContent = '↙'
       if (loadedEvents.length) {
-        renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+        renderCurrentWindow(currentTimeMs, isPlaying)
       }
     }
 
@@ -1577,7 +1672,7 @@
       stageEl.classList.remove('pseudo-fullscreen')
       fullscreenToggleEl.textContent = '⛶'
       if (loadedEvents.length) {
-        renderPlayer(loadedEvents, currentTimeMs, isPlaying)
+        renderCurrentWindow(currentTimeMs, isPlaying)
       }
     }
 
