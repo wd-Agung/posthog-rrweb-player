@@ -267,8 +267,10 @@
     }
 
     #player {
+      align-self: start;
+      width: 100%;
       min-width: 320px;
-      min-height: 420px;
+      min-height: 0;
       background: #ffffff;
       border: 1px solid var(--border);
       border-radius: 8px;
@@ -561,6 +563,7 @@
     let isPlaying = false
     let isScrubbing = false
     let patchWorker = null
+    let resizeRenderTimer = null
     const keyboardShortcutTargets = new WeakSet()
     const LARGE_FILE_LIVE_PATCH_THRESHOLD = 100 * 1024 * 1024
     const URL_RE = /https?:\/\/[^\s<>"')]+/g
@@ -727,6 +730,15 @@
         const wasPlaying = isPlaying
         renderPlayer(loadedEvents, currentTimeMs, wasPlaying)
       }
+    })
+
+    window.addEventListener('resize', () => {
+      if (!loadedEvents.length) return
+      window.clearTimeout(resizeRenderTimer)
+      resizeRenderTimer = window.setTimeout(() => {
+        const wasPlaying = isPlaying
+        renderPlayer(loadedEvents, currentTimeMs, wasPlaying)
+      }, 150)
     })
 
     document.addEventListener('keydown', handleKeyboardShortcut)
@@ -1331,10 +1343,7 @@
       playerEl.textContent = ''
 
       const viewport = getRecordedViewport(events)
-      const stageRect = document.querySelector('.stage').getBoundingClientRect()
-      const expanded = isExpanded()
-      const width = expanded ? Math.max(viewport.width, Math.floor(stageRect.width - 24)) : viewport.width
-      const height = expanded ? Math.max(viewport.height, Math.floor(stageRect.height - 86)) : viewport.height
+      const { width, height } = getContainedPlayerSize(viewport)
 
       const Player = window.rrwebPlayer
       if (!Player) {
@@ -1369,6 +1378,26 @@
       if (seekToMs > 0 || playAfterSeek) {
         player.goto(currentTimeMs, playAfterSeek)
         bindReplayFrameKeyboardShortcuts()
+      }
+    }
+
+    function getContainedPlayerSize(viewport) {
+      const stageRect = stageEl.getBoundingClientRect()
+      const stageStyle = window.getComputedStyle(stageEl)
+      const paddingX = parseFloat(stageStyle.paddingLeft) + parseFloat(stageStyle.paddingRight)
+      const paddingY = parseFloat(stageStyle.paddingTop) + parseFloat(stageStyle.paddingBottom)
+      const timelineHeight = timelineEl.classList.contains('ready')
+        ? timelineEl.getBoundingClientRect().height + 10
+        : 0
+      const availableWidth = Math.max(320, Math.floor(stageRect.width - paddingX))
+      const availableHeight = Math.max(320, Math.floor(stageRect.height - paddingY - timelineHeight))
+      const maxWidth = Math.min(viewport.width, availableWidth)
+      const maxHeight = isExpanded() ? availableHeight : Math.min(viewport.height, availableHeight)
+      const scale = Math.min(maxWidth / viewport.width, maxHeight / viewport.height, 1)
+
+      return {
+        width: Math.max(320, Math.floor(viewport.width * scale)),
+        height: Math.max(320, Math.floor(viewport.height * scale)),
       }
     }
 
