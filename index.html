@@ -496,7 +496,7 @@
         <div id="error" class="error" role="alert"></div>
       </aside>
 
-      <section class="stage">
+      <section class="stage" tabindex="-1">
         <div id="player" class="empty">Open a JSON or JSONL recording file to start playback.</div>
         <div id="timeline" class="timeline" aria-label="Replay timeline">
           <div id="activityStrip" class="activity-strip" aria-label="User activity over time">
@@ -524,6 +524,7 @@
     const playerEl = document.getElementById('player')
     const statusEl = document.getElementById('status')
     const errorEl = document.getElementById('error')
+    const stageEl = document.querySelector('.stage')
     const fileNameEl = document.getElementById('fileName')
     const eventCountEl = document.getElementById('eventCount')
     const viewportSizeEl = document.getElementById('viewportSize')
@@ -560,6 +561,7 @@
     let isPlaying = false
     let isScrubbing = false
     let patchWorker = null
+    const keyboardShortcutTargets = new WeakSet()
     const LARGE_FILE_LIVE_PATCH_THRESHOLD = 100 * 1024 * 1024
     const URL_RE = /https?:\/\/[^\s<>"')]+/g
 
@@ -690,6 +692,7 @@
       currentTimeMs = Number(timeScrubberEl.value)
       player.goto(currentTimeMs, isPlaying)
       isScrubbing = false
+      timeScrubberEl.blur()
     })
 
     activityStripEl.addEventListener('click', (event) => {
@@ -712,7 +715,7 @@
       }
 
       try {
-        await document.querySelector('.stage').requestFullscreen()
+        await stageEl.requestFullscreen()
       } catch (_) {
         enterPseudoFullscreen()
       }
@@ -726,8 +729,10 @@
       }
     })
 
-    document.addEventListener('keydown', (event) => {
-      if (event.key === 'Escape' && document.querySelector('.stage').classList.contains('pseudo-fullscreen')) {
+    document.addEventListener('keydown', handleKeyboardShortcut)
+
+    function handleKeyboardShortcut(event) {
+      if (event.key === 'Escape' && stageEl.classList.contains('pseudo-fullscreen')) {
         exitPseudoFullscreen()
         return
       }
@@ -743,9 +748,10 @@
       }
 
       event.preventDefault()
+      event.stopPropagation()
       const step = event.shiftKey ? 10000 : 5000
       seekBy(event.key === 'ArrowRight' ? step : -step)
-    })
+    }
 
     ;['dragenter', 'dragover'].forEach((eventName) => {
       dropzone.addEventListener(eventName, (event) => {
@@ -1349,18 +1355,51 @@
 
       const meta = typeof player.getMetaData === 'function' ? player.getMetaData() : null
       totalTimeMs = meta && Number.isFinite(meta.totalTime) ? meta.totalTime : getDurationMs(events)
-      currentTimeMs = 0
+      currentTimeMs = Math.max(0, Math.min(totalTimeMs, Number(seekToMs) || 0))
       isPlaying = false
       timelineEl.classList.add('ready')
       timeScrubberEl.max = String(Math.max(0, totalTimeMs))
-      timeScrubberEl.value = String(Math.max(0, Math.min(totalTimeMs, seekToMs)))
+      timeScrubberEl.value = String(currentTimeMs)
       totalTimeEl.textContent = formatClock(totalTimeMs)
       renderActivityStrip(events)
       updateTimeline(Number(timeScrubberEl.value))
       bindPlayerTimelineEvents()
+      bindReplayFrameKeyboardShortcuts()
 
       if (seekToMs > 0 || playAfterSeek) {
-        player.goto(Number(timeScrubberEl.value), playAfterSeek)
+        player.goto(currentTimeMs, playAfterSeek)
+        bindReplayFrameKeyboardShortcuts()
+      }
+    }
+
+    function bindReplayFrameKeyboardShortcuts() {
+      for (let attempt = 0; attempt < 12; attempt += 1) {
+        window.setTimeout(bindReplayFrameKeyboardShortcutsOnce, attempt * 100)
+      }
+    }
+
+    function bindReplayFrameKeyboardShortcutsOnce() {
+      const frames = playerEl.querySelectorAll('iframe')
+      for (const frame of frames) {
+        try {
+          if (!keyboardShortcutTargets.has(frame)) {
+            frame.addEventListener('load', bindReplayFrameKeyboardShortcuts)
+            keyboardShortcutTargets.add(frame)
+          }
+
+          const frameWindow = frame.contentWindow
+          const frameDocument = frame.contentDocument || frameWindow?.document
+          if (frameWindow && !keyboardShortcutTargets.has(frameWindow)) {
+            frameWindow.addEventListener('keydown', handleKeyboardShortcut, true)
+            keyboardShortcutTargets.add(frameWindow)
+          }
+          if (frameDocument && !keyboardShortcutTargets.has(frameDocument)) {
+            frameDocument.addEventListener('keydown', handleKeyboardShortcut, true)
+            keyboardShortcutTargets.add(frameDocument)
+          }
+        } catch (_) {
+          // Cross-origin replay frames cannot be bound. The parent page shortcut still works.
+        }
       }
     }
 
@@ -1402,7 +1441,8 @@
     }
 
     function seekBy(deltaMs) {
-      seekTo(currentTimeMs + deltaMs)
+      const baseTime = Number.isFinite(Number(timeScrubberEl.value)) ? Number(timeScrubberEl.value) : currentTimeMs
+      seekTo(baseTime + deltaMs)
     }
 
     function seekTo(ms) {
@@ -1410,6 +1450,8 @@
       currentTimeMs = Math.max(0, Math.min(totalTimeMs, ms))
       player.goto(currentTimeMs, isPlaying)
       updateTimeline(currentTimeMs)
+      stageEl.focus({ preventScroll: true })
+      bindReplayFrameKeyboardShortcuts()
     }
 
     function renderActivityStrip(events) {
@@ -1494,7 +1536,7 @@
 
     function enterPseudoFullscreen() {
       document.body.classList.add('player-expanded')
-      document.querySelector('.stage').classList.add('pseudo-fullscreen')
+      stageEl.classList.add('pseudo-fullscreen')
       fullscreenToggleEl.textContent = '↙'
       if (loadedEvents.length) {
         renderPlayer(loadedEvents, currentTimeMs, isPlaying)
@@ -1503,7 +1545,7 @@
 
     function exitPseudoFullscreen() {
       document.body.classList.remove('player-expanded')
-      document.querySelector('.stage').classList.remove('pseudo-fullscreen')
+      stageEl.classList.remove('pseudo-fullscreen')
       fullscreenToggleEl.textContent = '⛶'
       if (loadedEvents.length) {
         renderPlayer(loadedEvents, currentTimeMs, isPlaying)
