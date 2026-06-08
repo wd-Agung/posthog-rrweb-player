@@ -1329,8 +1329,7 @@
           durationMs: Math.max(0, summary.last - summary.first),
         }))
         .sort((a, b) => {
-          if (b.fullSnapshots !== a.fullSnapshots) return b.fullSnapshots - a.fullSnapshots
-          if (b.count !== a.count) return b.count - a.count
+          if (a.first !== b.first) return a.first - b.first
           return String(a.label).localeCompare(String(b.label))
         })
     }
@@ -1345,15 +1344,21 @@
     function getActiveWindowSegments(events, windows) {
       if (!events.length || !windows.length) return []
 
-      const segments = [{ startMs: 0, windowId: windows[0].id }]
-      for (const event of events) {
-        const tag = typeof event.data?.tag === 'string' ? event.data.tag.toLowerCase() : ''
-        if (event.type !== 5 || tag !== 'window visible') continue
+      const windowIds = new Set(windows.map((windowInfo) => windowInfo.id))
+      const visibleWindowIds = []
+      const initialWindowId = getInitialWindowId(windows)
+      const segments = [{ startMs: 0, windowId: initialWindowId }]
+      let activeWindowId = initialWindowId
 
-        const windowId = eventWindowId(event)
-        const startMs = Math.max(0, Number(event.timestamp || 0) - sessionStartTimestamp)
+      const removeVisibleWindow = (windowId) => {
+        const index = visibleWindowIds.indexOf(windowId)
+        if (index >= 0) visibleWindowIds.splice(index, 1)
+      }
+
+      const appendSegment = (startMs, windowId) => {
+        if (!windowId || activeWindowId === windowId) return
+        activeWindowId = windowId
         const previous = segments[segments.length - 1]
-        if (previous && previous.windowId === windowId) continue
         if (previous && previous.startMs === startMs) {
           previous.windowId = windowId
         } else {
@@ -1361,7 +1366,35 @@
         }
       }
 
+      for (const event of events) {
+        const tag = typeof event.data?.tag === 'string' ? event.data.tag.toLowerCase() : ''
+        if (event.type !== 5 || (tag !== 'window visible' && tag !== 'window hidden')) continue
+
+        const windowId = eventWindowId(event)
+        if (!windowIds.has(windowId)) continue
+        const startMs = Math.max(0, Number(event.timestamp || 0) - sessionStartTimestamp)
+
+        if (tag === 'window visible') {
+          removeVisibleWindow(windowId)
+          visibleWindowIds.push(windowId)
+          appendSegment(startMs, windowId)
+          continue
+        }
+
+        removeVisibleWindow(windowId)
+        if (windowId === activeWindowId && visibleWindowIds.length) {
+          appendSegment(startMs, visibleWindowIds[visibleWindowIds.length - 1])
+        }
+      }
+
       return segments
+    }
+
+    function getInitialWindowId(windows) {
+      return windows.reduce((earliest, windowInfo) => {
+        if (!earliest || windowInfo.first < earliest.first) return windowInfo
+        return earliest
+      }, null)?.id || windows[0]?.id || ''
     }
 
     function getWindowIdForTime(ms) {
