@@ -646,11 +646,14 @@
         loadedValues = patchedValues
         allEvents = patchedEvents
         setupWindowSelect(patchedEvents, selectedWindowId)
+        if (!windowSummaries.length) {
+          throw new Error('Patched JSON has rrweb events, but none of its windows contain a replayable full snapshot.')
+        }
         const selectedEvents = getCurrentWindowEvents(currentTimeMs)
-        renderCurrentWindow(0)
+        const rendered = renderCurrentWindow(0)
         updateDetails({ name: patchedFileName(), size: new Blob([serializeValues(patchedValues)]).size }, selectedEvents)
         patchStatusEl.textContent = `${stats.urlsReplaced} URLs, ${stats.bucketRewrites} buckets`
-        statusEl.textContent = 'Patched'
+        if (rendered) statusEl.textContent = 'Patched'
       } catch (error) {
         showPatchError(error.message || String(error))
         statusEl.textContent = 'Patch failed'
@@ -833,12 +836,15 @@
         loadedFileName = file.name
         loadedFileSize = file.size
         setupWindowSelect(events)
+        if (!windowSummaries.length) {
+          throw new Error('This file has rrweb events, but none of its windows contain a replayable full snapshot.')
+        }
         setPatchedDownload(null)
         patchStatusEl.textContent = '-'
         const selectedEvents = getCurrentWindowEvents(0)
-        renderCurrentWindow(0)
+        const rendered = renderCurrentWindow(0)
         updateDetails(file, selectedEvents)
-        statusEl.textContent = 'Ready'
+        if (rendered) statusEl.textContent = 'Ready'
       } catch (error) {
         showError(error.message || String(error))
         statusEl.textContent = 'Load failed'
@@ -1281,7 +1287,7 @@
           }
         }
 
-        if ('type' in value && 'timestamp' in value) {
+        if (isValidReplayEvent(value)) {
           events.push(value)
           return
         }
@@ -1293,6 +1299,23 @@
 
       values.forEach(visit)
       return events.sort((a, b) => Number(a.timestamp || 0) - Number(b.timestamp || 0))
+    }
+
+    function isValidReplayEvent(event) {
+      return Boolean(
+        event &&
+        typeof event === 'object' &&
+        Number.isFinite(Number(event.type)) &&
+        Number.isFinite(Number(event.timestamp))
+      )
+    }
+
+    function hasRenderableReplayEvents(events) {
+      return Boolean(
+        Array.isArray(events) &&
+        events.length >= 2 &&
+        events.some((event) => event.type === 2)
+      )
     }
 
     function setupWindowSelect(events, preferredWindowId = '') {
@@ -1355,6 +1378,12 @@
           ...summary,
           durationMs: Math.max(0, summary.last - summary.first),
         }))
+        .filter((summary) => (
+          summary.count >= 2 &&
+          summary.fullSnapshots > 0 &&
+          Number.isFinite(summary.first) &&
+          Number.isFinite(summary.last)
+        ))
         .sort((a, b) => {
           if (a.first !== b.first) return a.first - b.first
           return String(a.label).localeCompare(String(b.label))
@@ -1440,7 +1469,7 @@
 
     function getWindowEvents(windowId) {
       if (!windowId) return []
-      return allEvents.filter((event) => eventWindowId(event) === windowId)
+      return allEvents.filter((event) => isValidReplayEvent(event) && eventWindowId(event) === windowId)
     }
 
     function getCurrentWindowEvents(ms = currentTimeMs) {
@@ -1448,8 +1477,9 @@
     }
 
     function getWindowStartOffset(events) {
-      if (!events.length || !sessionStartTimestamp) return 0
-      return Math.max(0, Number(events[0].timestamp || 0) - sessionStartTimestamp)
+      const replayEvents = events.filter(isValidReplayEvent)
+      if (!replayEvents.length || !sessionStartTimestamp) return 0
+      return Math.max(0, Number(replayEvents[0].timestamp || 0) - sessionStartTimestamp)
     }
 
     function getTimelineDurationMs() {
@@ -1467,21 +1497,38 @@
     function renderCurrentWindow(seekToMs = currentTimeMs, playAfterSeek = false) {
       const windowId = getWindowIdForTime(seekToMs)
       const events = getWindowEvents(windowId)
-      if (!events.length) return
-      renderPlayer(events, seekToMs, playAfterSeek, windowId)
+      if (!hasRenderableReplayEvents(events)) {
+        showError('The selected recording window cannot be replayed because it has no full snapshot.')
+        statusEl.textContent = 'Replay failed'
+        return false
+      }
+
+      try {
+        renderPlayer(events, seekToMs, playAfterSeek, windowId)
+        return true
+      } catch (error) {
+        showError(error.message || String(error))
+        statusEl.textContent = 'Replay failed'
+        return false
+      }
     }
 
     function renderPlayer(events, seekToMs = 0, playAfterSeek = false, windowId = eventWindowId(events[0])) {
+      const replayEvents = events.filter(isValidReplayEvent)
+      if (!hasRenderableReplayEvents(replayEvents)) {
+        throw new Error('The selected recording window cannot be replayed because it has no full snapshot.')
+      }
+
       if (player && typeof player.pause === 'function') {
         player.pause()
       }
 
-      loadedEvents = events
+      loadedEvents = replayEvents
       renderedWindowId = windowId
       playerEl.classList.remove('empty')
       playerEl.textContent = ''
 
-      const viewport = getRecordedViewport(events)
+      const viewport = getRecordedViewport(replayEvents)
       const { width, height } = getContainedPlayerSize(viewport)
 
       const Player = window.rrwebPlayer
@@ -1492,7 +1539,7 @@
       player = new Player({
         target: playerEl,
         props: {
-          events,
+          events: replayEvents,
           width,
           height,
           maxScale: 1,
@@ -1503,10 +1550,10 @@
       })
 
       const meta = typeof player.getMetaData === 'function' ? player.getMetaData() : null
-      const localDurationMs = meta && Number.isFinite(meta.totalTime) ? meta.totalTime : getDurationMs(events)
+      const localDurationMs = meta && Number.isFinite(meta.totalTime) ? meta.totalTime : getDurationMs(replayEvents)
       totalTimeMs = getTimelineDurationMs() || localDurationMs
       currentTimeMs = Math.max(0, Math.min(totalTimeMs, Number(seekToMs) || 0))
-      const localSeekMs = toLocalWindowOffset(events, currentTimeMs)
+      const localSeekMs = toLocalWindowOffset(replayEvents, currentTimeMs)
       isPlaying = false
       timelineEl.classList.add('ready')
       timeScrubberEl.max = String(Math.max(0, totalTimeMs))
@@ -1642,11 +1689,12 @@
     function renderActivityStrip(events) {
       activityStripEl.querySelectorAll('.activity-marker').forEach((marker) => marker.remove())
 
-      if (!events.length || !totalTimeMs) return
+      const replayEvents = events.filter(isValidReplayEvent)
+      if (!replayEvents.length || !totalTimeMs) return
 
-      const firstTimestamp = Number(events[0].timestamp || 0)
+      const firstTimestamp = Number(replayEvents[0].timestamp || 0)
       const bins = new Array(120).fill(0)
-      for (const event of events) {
+      for (const event of replayEvents) {
         if (!isUserActivityEvent(event)) continue
         const offset = Math.max(0, Number(event.timestamp || 0) - firstTimestamp)
         const index = Math.min(bins.length - 1, Math.floor((offset / totalTimeMs) * bins.length))
@@ -1678,12 +1726,22 @@
     }
 
     function updateDetails(file, events) {
-      const first = events[0]
-      const last = events[events.length - 1]
+      const replayEvents = events.filter(isValidReplayEvent)
+      if (!replayEvents.length) {
+        eventCountEl.textContent = '0'
+        viewportSizeEl.textContent = '-'
+        durationEl.textContent = '-'
+        firstEventEl.textContent = '-'
+        fileNameEl.textContent = `${file.name} (${formatBytes(file.size)})`
+        return
+      }
+
+      const first = replayEvents[0]
+      const last = replayEvents[replayEvents.length - 1]
       const durationMs = Math.max(0, Number(last.timestamp || 0) - Number(first.timestamp || 0))
 
-      eventCountEl.textContent = events.length.toLocaleString()
-      const viewport = getRecordedViewport(events)
+      eventCountEl.textContent = replayEvents.length.toLocaleString()
+      const viewport = getRecordedViewport(replayEvents)
       viewportSizeEl.textContent = `${viewport.width} x ${viewport.height}`
       durationEl.textContent = formatDuration(durationMs)
       firstEventEl.textContent = first.timestamp ? new Date(first.timestamp).toLocaleString() : '-'
@@ -1743,13 +1801,15 @@
     }
 
     function getDurationMs(events) {
-      if (!events.length) return 0
-      return Math.max(0, Number(events[events.length - 1].timestamp || 0) - Number(events[0].timestamp || 0))
+      const replayEvents = events.filter(isValidReplayEvent)
+      if (!replayEvents.length) return 0
+      return Math.max(0, Number(replayEvents[replayEvents.length - 1].timestamp || 0) - Number(replayEvents[0].timestamp || 0))
     }
 
     function getRecordedViewport(events) {
-      const metaEvent = events.find((event) => event.type === 4 && event.data)
-      const resizeEvent = [...events].reverse().find((event) => (
+      const replayEvents = events.filter(isValidReplayEvent)
+      const metaEvent = replayEvents.find((event) => event.type === 4 && event.data)
+      const resizeEvent = [...replayEvents].reverse().find((event) => (
         event.type === 3 &&
         event.data &&
         event.data.source === 4 &&
