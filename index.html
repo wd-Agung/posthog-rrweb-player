@@ -1476,6 +1476,14 @@
       return getWindowEvents(getWindowIdForTime(ms))
     }
 
+    function getFirstRenderableWindowId(excludedWindowId = '') {
+      for (const windowInfo of windowSummaries) {
+        if (windowInfo.id === excludedWindowId) continue
+        if (hasRenderableReplayEvents(getWindowEvents(windowInfo.id))) return windowInfo.id
+      }
+      return ''
+    }
+
     function getWindowStartOffset(events) {
       const replayEvents = events.filter(isValidReplayEvent)
       if (!replayEvents.length || !sessionStartTimestamp) return 0
@@ -1495,8 +1503,16 @@
     }
 
     function renderCurrentWindow(seekToMs = currentTimeMs, playAfterSeek = false) {
-      const windowId = getWindowIdForTime(seekToMs)
-      const events = getWindowEvents(windowId)
+      let windowId = getWindowIdForTime(seekToMs)
+      let events = getWindowEvents(windowId)
+      if (!hasRenderableReplayEvents(events)) {
+        const fallbackWindowId = getFirstRenderableWindowId(windowId)
+        if (fallbackWindowId) {
+          windowId = fallbackWindowId
+          events = getWindowEvents(windowId)
+        }
+      }
+
       if (!hasRenderableReplayEvents(events)) {
         showError('The selected recording window cannot be replayed because it has no full snapshot.')
         statusEl.textContent = 'Replay failed'
