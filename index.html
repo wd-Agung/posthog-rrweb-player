@@ -230,6 +230,23 @@
       gap: 8px;
     }
 
+    .checkbox-field {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 700;
+      line-height: 1.35;
+    }
+
+    .checkbox-field input {
+      width: 16px;
+      height: 16px;
+      accent-color: var(--accent);
+      flex: 0 0 auto;
+    }
+
     .row {
       display: flex;
       justify-content: space-between;
@@ -468,6 +485,10 @@
               <option value="">No recording loaded</option>
             </select>
           </div>
+          <label class="checkbox-field" for="allowReplayScripts">
+            <input id="allowReplayScripts" type="checkbox" />
+            Allow replay scripts/canvas
+          </label>
         </div>
 
         <div class="patcher">
@@ -542,6 +563,7 @@
     const activityStripEl = document.getElementById('activityStrip')
     const playheadEl = document.getElementById('playhead')
     const windowSelectEl = document.getElementById('windowSelect')
+    const allowReplayScriptsEl = document.getElementById('allowReplayScripts')
     const serviceAccountText = document.getElementById('serviceAccountText')
     const oldBucketInput = document.getElementById('oldBucketInput')
     const newBucketInput = document.getElementById('newBucketInput')
@@ -686,6 +708,11 @@
       renderCurrentWindow(currentTimeMs)
       updateDetails({ name: loadedFileName, size: loadedFileSize }, selectedEvents)
       statusEl.textContent = 'Ready'
+    })
+
+    allowReplayScriptsEl.addEventListener('change', () => {
+      if (!allEvents.length) return
+      renderCurrentWindow(currentTimeMs, isPlaying)
     })
 
     timeScrubberEl.addEventListener('input', () => {
@@ -1471,6 +1498,7 @@
           maxScale: 1,
           autoPlay: false,
           showController: false,
+          UNSAFE_replayCanvas: allowReplayScriptsEl.checked,
         },
       })
 
@@ -1685,6 +1713,11 @@
       playerEl.classList.add('empty')
       playerEl.textContent = 'The selected file could not be loaded.'
       timelineEl.classList.remove('ready')
+    }
+
+    function showPatchError(message) {
+      errorEl.textContent = message
+      patchStatusEl.textContent = 'Failed'
     }
 
     function isExpanded() {
